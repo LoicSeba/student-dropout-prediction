@@ -81,8 +81,7 @@ def split_features_target(df: pd.DataFrame):
 
 
 def build_preprocessing_pipeline() -> Pipeline:
-    """Full pipeline, reusable at both training time AND inference time
-    (API) once fit() and saved with joblib."""
+    """Builds a pipeline to preprocess the data."""
     column_transformer = ColumnTransformer(
         transformers=[
             ('cat', OneHotEncoder(handle_unknown='ignore', drop='first'), CAT_COLS)
