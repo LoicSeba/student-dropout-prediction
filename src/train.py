@@ -9,6 +9,7 @@ from sklearn.pipeline import Pipeline
 
 from preprocessing import build_preprocessing_pipeline, load_and_split
 from evaluate import evaluate
+from feature_defaults import save_feature_defaults
 
 MODEL_CANDIDATES = {
     "random_forest": {
@@ -90,22 +91,24 @@ def main():
     data_path = current_dir.parent / "data" / "data.csv"
     model_output_path = current_dir.parent / "models" / "final_pipeline.joblib"
     model_output_path.parent.mkdir(parents=True, exist_ok=True)
-
-    cache_dir = current_dir.parent / ".pipeline_cache"
-
+ 
+    cache_dir = current_dir.parent / ".pipeline_cache"  # gitignored — safe to delete anytime
+ 
     X_train, X_test, y_train, y_test = load_and_split(data_path)
-
+ 
     results = train_all_candidates(X_train, y_train, X_test, y_test, cache_dir=str(cache_dir))
-
+ 
     best_name, best_result = select_best_model(results)
-
+ 
     print(f"\n=== Selected model: {best_name} ===")
     print(f"CV macro F1: {best_result['cv_f1']:.4f}")
     print(f"Test macro F1: {best_result['test_f1']:.4f}")
-
+ 
     joblib.dump(best_result["fitted_pipeline"], model_output_path)
     print(f"\nSaved full pipeline (preprocessing + model) to: {model_output_path}")
-
+ 
+    defaults_output_path = current_dir.parent / "models" / "feature_defaults.json"
+    save_feature_defaults(X_train, defaults_output_path)
 
 if __name__ == "__main__":
     main()
