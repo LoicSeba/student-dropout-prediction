@@ -2,10 +2,11 @@ import requests
 import streamlit as st
 import json
 from pathlib import Path
+import os
 
 import labels
 
-API_URL = "http://localhost:8000/predict"
+API_URL = os.environ.get("API_URL", "http://localhost:8000/predict")
 
 DEFAULTS_PATH = Path(__file__).resolve().parent.parent / "models" / "feature_defaults.json"
  
