@@ -6,6 +6,7 @@ from sklearn.base import clone
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
+from sklearn.utils.class_weight import compute_sample_weight
 
 from evaluate import evaluate
 from feature_defaults import save_feature_defaults
@@ -43,28 +44,39 @@ def build_full_pipeline(preprocessing_pipeline: Pipeline, estimator, cache_dir: 
     )
 
 
-def run_grid_search(pipeline: Pipeline, param_grid: dict, X_train, y_train, cv: int = 5) -> GridSearchCV:
+def run_grid_search(pipeline, param_grid, X_train, y_train, cv=5, sample_weight=None):
+    """Runs a GridSearchCV to find the best hyperparameters"""
+
+    fit_params = {}
+    if sample_weight is not None:
+        fit_params["model__sample_weight"] = sample_weight
+
     grid = GridSearchCV(
         pipeline,
         param_grid=param_grid,
         cv=cv,
-        scoring="f1_macro",  
+        scoring="f1_macro",
         n_jobs=-1,
         verbose=1,
     )
-    grid.fit(X_train, y_train)
+    grid.fit(X_train, y_train, **fit_params)
     return grid
 
 
 def train_all_candidates(X_train, y_train, X_test, y_test, cache_dir: str = None):
+    """Trains all models and returns the results"""
+
     results = {}
+
+    weights = compute_sample_weight(class_weight="balanced", y=y_train)
 
     for name, cfg in MODEL_CANDIDATES.items():
         print(f"\n=== Training {name} (GridSearchCV) ===")
         preprocessing_pipeline = build_preprocessing_pipeline()
         full_pipeline = build_full_pipeline(preprocessing_pipeline, clone(cfg["estimator"]), cache_dir=cache_dir)
 
-        grid = run_grid_search(full_pipeline, cfg["param_grid"], X_train, y_train)
+        sw = weights if name == "gradient_boosting" else None
+        grid = run_grid_search(full_pipeline, cfg["param_grid"], X_train, y_train, sample_weight=sw)
         print(f"Best CV macro F1: {grid.best_score_:.4f}")
         print(f"Best params: {grid.best_params_}")
 
@@ -92,7 +104,7 @@ def main():
     model_output_path = current_dir.parent / "models" / "final_pipeline.joblib"
     model_output_path.parent.mkdir(parents=True, exist_ok=True)
  
-    cache_dir = current_dir.parent / ".pipeline_cache"  # gitignored — safe to delete anytime
+    cache_dir = current_dir.parent / ".pipeline_cache"
  
     X_train, X_test, y_train, y_test = load_and_split(data_path)
  
