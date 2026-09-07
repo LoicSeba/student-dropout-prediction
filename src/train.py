@@ -4,7 +4,7 @@ import joblib
 from joblib import Memory
 from sklearn.base import clone
 from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.model_selection import GridSearchCV
+from sklearn.model_selection import GridSearchCV, RandomizedSearchCV
 from sklearn.pipeline import Pipeline
 from sklearn.utils.class_weight import compute_sample_weight
 
@@ -16,21 +16,26 @@ MODEL_CANDIDATES = {
     "random_forest": {
         "estimator": RandomForestClassifier(class_weight="balanced", random_state=42),
         "param_grid": {
-            "model__n_estimators": [100, 200],
-            "model__max_depth": [None, 10, 20],
-            "model__min_samples_leaf": [1, 2, 4],
+            "model__n_estimators": [200, 300, 500, 800],
+            "model__max_depth": [None, 8, 12, 16, 20, 30],
+            "model__min_samples_split": [2, 5, 10, 20],
+            "model__min_samples_leaf": [1, 2, 4, 8],
+            "model__max_features": ["sqrt", "log2", 0.5, 0.75],
+            "model__criterion": ["gini", "entropy"],
         },
     },
     "gradient_boosting": {
         "estimator": GradientBoostingClassifier(random_state=42),
         "param_grid": {
-            "model__n_estimators": [100, 200],
-            "model__learning_rate": [0.05, 0.1],
-            "model__max_depth": [2, 3, 4],
-        },
+            "model__n_estimators": [100, 200, 300, 500],
+            "model__learning_rate": [0.01, 0.03, 0.05, 0.1, 0.15],
+            "model__max_depth": [2, 3, 4, 5],
+            "model__min_samples_split": [2, 5, 10, 20],
+            "model__min_samples_leaf": [1, 2, 4, 8],
+            "model__subsample": [0.7, 0.85, 1.0],
+        }
     },
 }
-
 
 def build_full_pipeline(preprocessing_pipeline: Pipeline, estimator, cache_dir: str = None) -> Pipeline:
     """Builds a full pipeline to preprocess the data and train a model"""
@@ -43,7 +48,6 @@ def build_full_pipeline(preprocessing_pipeline: Pipeline, estimator, cache_dir: 
         memory=memory,
     )
 
-
 def run_grid_search(pipeline, param_grid, X_train, y_train, cv=5, sample_weight=None):
     """Runs a GridSearchCV to find the best hyperparameters"""
 
@@ -51,16 +55,42 @@ def run_grid_search(pipeline, param_grid, X_train, y_train, cv=5, sample_weight=
     if sample_weight is not None:
         fit_params["model__sample_weight"] = sample_weight
 
-    grid = GridSearchCV(
+    search = RandomizedSearchCV(
         pipeline,
-        param_grid=param_grid,
-        cv=cv,
+        param_distributions=param_grid,
+        n_iter=60,
         scoring="f1_macro",
+        cv=cv,
+        n_jobs=-1,
+        random_state=42,
+        verbose=1,
+        refit=False,
+    )
+
+    search.fit(X_train, y_train, **fit_params)
+
+    best_params = search.best_params_
+
+    fine_param_grid = {}
+    for param, val in best_params.items():
+        if isinstance(val, (int, float)) and not isinstance(val, bool):
+            fine_param_grid[param] = [val * 0.8, val, val * 1.2] 
+        else:
+            fine_param_grid[param] = [val]
+
+    fine_search = GridSearchCV(
+        pipeline,
+        param_grid=fine_param_grid,
+        scoring="f1_macro",
+        cv=cv,
         n_jobs=-1,
         verbose=1,
+        refit=True,
     )
-    grid.fit(X_train, y_train, **fit_params)
-    return grid
+
+    fine_search.fit(X_train, y_train, **fit_params)
+
+    return fine_search
 
 
 def train_all_candidates(X_train, y_train, X_test, y_test, cache_dir: str = None):
