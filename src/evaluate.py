@@ -1,4 +1,6 @@
 from sklearn.metrics import classification_report, f1_score
+
+
 def evaluate(model, X_test, y_test, label: str) -> float:
     """Evaluates a model on the test set."""
     preds = model.predict(X_test)
