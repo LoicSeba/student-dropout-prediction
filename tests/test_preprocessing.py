@@ -1,5 +1,5 @@
 import pandas as pd
-import pytest
+
 from preprocessing import RareCategoryGrouper, build_preprocessing_pipeline
 
 
