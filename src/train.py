@@ -80,6 +80,7 @@ def train_all_candidates(X_train, y_train, X_test, y_test, cache_dir: str = None
         print(f"Best CV macro F1: {grid.best_score_:.4f}")
         print(f"Best params: {grid.best_params_}")
 
+
         test_f1 = evaluate(grid.best_estimator_, X_test, y_test, label=name)
 
         results[name] = {
