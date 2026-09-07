@@ -1,10 +1,10 @@
-import requests
-import streamlit as st
 import json
-from pathlib import Path
 import os
+from pathlib import Path
 
 import labels
+import requests
+import streamlit as st
 
 API_URL = os.environ.get("API_URL", "http://localhost:8000/predict")
 

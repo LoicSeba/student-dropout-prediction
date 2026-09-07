@@ -7,9 +7,9 @@ from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
 from sklearn.model_selection import GridSearchCV
 from sklearn.pipeline import Pipeline
 
-from preprocessing import build_preprocessing_pipeline, load_and_split
 from evaluate import evaluate
 from feature_defaults import save_feature_defaults
+from preprocessing import build_preprocessing_pipeline, load_and_split
 
 MODEL_CANDIDATES = {
     "random_forest": {
