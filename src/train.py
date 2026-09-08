@@ -2,65 +2,200 @@ from pathlib import Path
 
 import joblib
 from joblib import Memory
-from sklearn.base import clone
-from sklearn.ensemble import GradientBoostingClassifier, RandomForestClassifier
-from sklearn.model_selection import GridSearchCV
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.model_selection import GridSearchCV, ParameterGrid, RandomizedSearchCV
 from sklearn.pipeline import Pipeline
-from sklearn.utils.class_weight import compute_sample_weight
 
 from evaluate import evaluate
 from feature_defaults import save_feature_defaults
+from feature_selection import (
+    BalancedGradientBoostingClassifier,
+    PreprocessingFeatureSelector,
+)
 from preprocessing import build_preprocessing_pipeline, load_and_split
 
 MODEL_CANDIDATES = {
     "random_forest": {
-        "estimator": RandomForestClassifier(class_weight="balanced", random_state=42),
+        "estimator": RandomForestClassifier(
+            class_weight="balanced",
+            random_state=42,
+            n_jobs=-1
+        ),
         "param_grid": {
-            "model__n_estimators": [100, 200],
-            "model__max_depth": [None, 10, 20],
-            "model__min_samples_leaf": [1, 2, 4],
+            "model__n_estimators": [200, 300, 500, 800],
+            "model__max_depth": [None, 8, 12, 16, 20, 30],
+            "model__min_samples_split": [2, 5, 10, 20],
+            "model__min_samples_leaf": [1, 2, 4, 8],
+            "model__max_features": ["sqrt", "log2", 0.5, 0.75],
+            "model__criterion": ["gini", "entropy"],
         },
     },
     "gradient_boosting": {
-        "estimator": GradientBoostingClassifier(random_state=42),
+        "estimator": BalancedGradientBoostingClassifier(
+            random_state=42
+        ),
         "param_grid": {
-            "model__n_estimators": [100, 200],
-            "model__learning_rate": [0.05, 0.1],
-            "model__max_depth": [2, 3, 4],
+            "model__n_estimators": [100, 200, 300, 500],
+            "model__learning_rate": [0.01, 0.03, 0.05, 0.1, 0.15],
+            "model__max_depth": [2, 3, 4, 5],
+            "model__min_samples_split": [2, 5, 10, 20],
+            "model__min_samples_leaf": [1, 2, 4, 8],
+            "model__subsample": [0.7, 0.85, 1.0],
         },
-    },
+    }
 }
 
 
 def build_full_pipeline(preprocessing_pipeline: Pipeline, estimator, cache_dir: str = None) -> Pipeline:
     """Builds a full pipeline to preprocess the data and train a model"""
-    memory = Memory(location=cache_dir, verbose=0) if cache_dir else None
+    selector = PreprocessingFeatureSelector(
+        preprocessing_pipeline=preprocessing_pipeline,
+        estimator=estimator,
+        min_features=5,
+        max_features=20,
+        step=1,
+        correlation_threshold=0.95,
+        cv=3,
+        random_state=42
+    )
+
+    memory = Memory(location=str(cache_dir), verbose=0) if cache_dir else None
+
     return Pipeline(
         steps=[
-            ("preprocessing", preprocessing_pipeline),
+            ("feature_selection", selector),
             ("model", estimator),
         ],
         memory=memory,
     )
 
+def build_local_grid(best_params, model_name):
+    grid = {}
 
-def run_grid_search(pipeline, param_grid, X_train, y_train, cv=5, sample_weight=None):
-    """Runs a GridSearchCV to find the best hyperparameters"""
+    if model_name == "random_forest":
+        max_depth = best_params["model__max_depth"]
+        if max_depth is None:
+            grid["model__max_depth"] = [8, 12, None]
+        else:
+            grid["model__max_depth"] = sorted(set([
+                max(4, max_depth - 2),
+                max_depth,
+                max_depth + 2
+            ]))
 
-    fit_params = {}
-    if sample_weight is not None:
-        fit_params["model__sample_weight"] = sample_weight
+        min_samples_split = best_params["model__min_samples_split"]
+        grid["model__min_samples_split"] = sorted(set([
+            max(2, min_samples_split - 2),
+            min_samples_split,
+            min_samples_split + 2
+        ]))
 
-    grid = GridSearchCV(
-        pipeline,
-        param_grid=param_grid,
-        cv=cv,
-        scoring="f1_macro",
-        n_jobs=-1,
-        verbose=1,
-    )
-    grid.fit(X_train, y_train, **fit_params)
+        min_samples_leaf = best_params["model__min_samples_leaf"]
+        grid["model__min_samples_leaf"] = sorted(set([
+            max(1, min_samples_leaf - 1),
+            min_samples_leaf,
+            min_samples_leaf + 1
+        ]))
+
+        max_features = best_params["model__max_features"]
+        if isinstance(max_features, float):
+            grid["model__max_features"] = sorted(set([
+                max(0.25, round(max_features - 0.1, 2)),
+                round(max_features, 2),
+                min(1.0, round(max_features + 0.1, 2))
+            ]))
+        else:
+            if max_features == "sqrt":
+                grid["model__max_features"] = ["sqrt", "log2"]
+            elif max_features == "log2":
+                grid["model__max_features"] = ["log2", "sqrt"]
+            else:
+                grid["model__max_features"] = [max_features, "sqrt"]
+
+    elif model_name == "gradient_boosting":
+        max_depth = best_params["model__max_depth"]
+        grid["model__max_depth"] = sorted(set([
+            max(1, max_depth - 1),
+            max_depth,
+            max_depth + 1
+        ]))
+
+        min_samples_split = best_params["model__min_samples_split"]
+        grid["model__min_samples_split"] = sorted(set([
+            max(2, min_samples_split - 2),
+            min_samples_split,
+            min_samples_split + 2
+        ]))
+
+        min_samples_leaf = best_params["model__min_samples_leaf"]
+        grid["model__min_samples_leaf"] = sorted(set([
+            max(1, min_samples_leaf - 1),
+            min_samples_leaf,
+            min_samples_leaf + 1
+        ]))
+
+        learning_rate = best_params["model__learning_rate"]
+        grid["model__learning_rate"] = sorted(set([
+            round(max(0.005, learning_rate * 0.75), 4),
+            round(learning_rate, 4),
+            round(min(1.0, learning_rate * 1.25), 4)
+        ]))
+
     return grid
+
+def run_grid_search(pipeline, param_grid, X_train, y_train, model_name):
+    """Runs a RandomizedSearchCV followed by a local GridSearchCV."""
+
+    n_iter = min(30, len(list(ParameterGrid(param_grid))))
+
+    randomized_search = RandomizedSearchCV(
+        estimator=pipeline,
+        param_distributions=param_grid,
+        n_iter=n_iter,
+        scoring="f1_macro",
+        cv=5,
+        random_state=42,
+        n_jobs=-1,
+        refit=False
+    )
+
+    print(f"\n[1/2] Running RandomizedSearchCV for {model_name}...")
+    randomized_search.fit(X_train, y_train)
+
+    best_params = randomized_search.best_params_
+
+    print("\nBest parameters from RandomizedSearchCV:")
+    for key, value in best_params.items():
+        print(f"  {key}: {value}")
+
+    print(f"RandomizedSearchCV best Macro-F1: {randomized_search.best_score_:.4f}")
+
+    local_grid = build_local_grid(
+        best_params=best_params,
+        model_name=model_name
+    )
+
+    n_grid_points = len(list(ParameterGrid(local_grid)))
+    print(f"\n[2/2] Running GridSearchCV ({n_grid_points} combinations)...")
+
+    grid_search = GridSearchCV(
+        estimator=pipeline,
+        param_grid=local_grid,
+        scoring="f1_macro",
+        cv=5,
+        n_jobs=-1,
+        refit=True
+    )
+
+    grid_search.fit(X_train, y_train)
+
+    print("\nBest parameters from GridSearchCV:")
+    for key, value in grid_search.best_params_.items():
+        print(f"  {key}: {value}")
+
+    print(f"GridSearchCV best Macro-F1: {grid_search.best_score_:.4f}")
+
+    return grid_search
 
 
 def train_all_candidates(X_train, y_train, X_test, y_test, cache_dir: str = None):
@@ -68,27 +203,43 @@ def train_all_candidates(X_train, y_train, X_test, y_test, cache_dir: str = None
 
     results = {}
 
-    weights = compute_sample_weight(class_weight="balanced", y=y_train)
-
     for name, cfg in MODEL_CANDIDATES.items():
-        print(f"\n=== Training {name} (GridSearchCV) ===")
+        print(f"\n=== Training {name} (RandomizedSearchCV + GridSearchCV) ===")
+
         preprocessing_pipeline = build_preprocessing_pipeline()
-        full_pipeline = build_full_pipeline(preprocessing_pipeline, clone(cfg["estimator"]), cache_dir=cache_dir)
 
-        sw = weights if name == "gradient_boosting" else None
-        grid = run_grid_search(full_pipeline, cfg["param_grid"], X_train, y_train, sample_weight=sw)
-        print(f"Best CV macro F1: {grid.best_score_:.4f}")
-        print(f"Best params: {grid.best_params_}")
+        full_pipeline = build_full_pipeline(
+            preprocessing_pipeline,
+            cfg["estimator"],
+            cache_dir=cache_dir
+        )
 
+        search = run_grid_search(
+            pipeline=full_pipeline,
+            param_grid=cfg["param_grid"],
+            X_train=X_train,
+            y_train=y_train,
+            model_name=name
+        )
 
-        test_f1 = evaluate(grid.best_estimator_, X_test, y_test, label=name)
+        test_f1 = evaluate(
+            search.best_estimator_,
+            X_test,
+            y_test,
+            label=name
+        )
 
         results[name] = {
-            "cv_f1": grid.best_score_,
+            "cv_f1": search.best_score_,
             "test_f1": test_f1,
-            "fitted_pipeline": grid.best_estimator_,
-            "best_params": grid.best_params_,
+            "fitted_pipeline": search.best_estimator_,
+            "best_params": search.best_params_,
         }
+
+        print(f"\n--- Summary for {name} ---")
+        print(f"Best CV Macro-F1: {search.best_score_:.4f}")
+        print(f"Test Macro-F1: {test_f1:.4f}")
+        print(f"Best parameters: {search.best_params_}")
 
     return results
 
@@ -117,9 +268,13 @@ def main():
     print(f"CV macro F1: {best_result['cv_f1']:.4f}")
     print(f"Test macro F1: {best_result['test_f1']:.4f}")
  
-    joblib.dump(best_result["fitted_pipeline"], model_output_path)
-    print(f"\nSaved full pipeline (preprocessing + model) to: {model_output_path}")
- 
+    best_pipeline = best_result["fitted_pipeline"]
+    best_pipeline.memory = None
+
+    joblib.dump(best_pipeline, model_output_path)
+
+    print(f"\nSaved full pipeline (preprocessing + feature selection + model) to: {model_output_path}")
+
     defaults_output_path = current_dir.parent / "models" / "feature_defaults.json"
     save_feature_defaults(X_train, defaults_output_path)
 
